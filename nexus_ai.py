@@ -14,38 +14,35 @@ class NexusAI:
         self.total = len(SKILLS)
         self.count = 0
         self.phones = {}
-        self.db = sqlite3.connect("nexus.db")
-        c = self.db.cursor()
-        c.execute('CREATE TABLE IF NOT EXISTS history (id INTEGER, cmd TEXT, skill TEXT, time TEXT)')
-        self.db.commit()
         print(f"✅ Started | Skills: {self.total}")
 
 ai = NexusAI()
 
-# WebSocket handler
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
     phone_id = None
-    print("📱 New WebSocket connection")
+    print("📱 New connection attempt")
     
     try:
-        async for msg in ws:
-            if msg.type == web.WSMsgType.TEXT:
-                if phone_id is None:
-                    phone_id = msg.data
-                    ai.phones[phone_id] = ws
-                    print(f"✅ Phone connected: {phone_id}")
-                    await ws.send(json.dumps({"status": "connected"}))
-                else:
-                    print(f"📱 From phone: {msg.data}")
-                    # Keep connection alive
-                    await ws.send(json.dumps({"status": "ok"}))
-            elif msg.type == web.WSMsgType.ERROR:
-                print(f"WebSocket error: {ws.exception()}")
+        # Wait for first message (phone ID)
+        msg = await ws.receive()
+        if msg.type == web.WSMsgType.TEXT:
+            phone_id = msg.data
+            ai.phones[phone_id] = ws
+            print(f"✅ Phone connected: {phone_id}")
+            await ws.send_str(json.dumps({"status": "ok"}))
+            
+            # Keep connection alive and listen for responses
+            async for response in ws:
+                if response.type == web.WSMsgType.TEXT:
+                    print(f"📱 From phone: {response.data}")
+                elif response.type == web.WSMsgType.ERROR:
+                    print(f"WebSocket error")
+                    break
     except Exception as e:
-        print(f"WebSocket exception: {e}")
+        print(f"❌ Error: {e}")
     finally:
         if phone_id and phone_id in ai.phones:
             del ai.phones[phone_id]
@@ -53,7 +50,18 @@ async def websocket_handler(request):
     
     return ws
 
-# Web pages
+async def send_to_phone(cmd):
+    """Send command to all connected phones"""
+    if not ai.phones:
+        return False
+    for phone_id, ws in list(ai.phones.items()):
+        try:
+            await ws.send_str(json.dumps({"command": cmd}))
+            return True
+        except:
+            continue
+    return False
+
 async def index(request):
     return web.Response(text=f"""
     <html><body style="background:#0a0a0a;color:#0f0;font-family:monospace;text-align:center;padding:50px">
@@ -70,17 +78,15 @@ async def cmd_handler(request):
     data = await request.post()
     cmd = data.get("cmd", "")
     
-    # Find skill
     for sid, skill in SKILLS.items():
         if sid in cmd.lower():
-            # If phone connected, execute
-            if ai.phones and sid in ["flashlight", "battery", "vibrate"]:
-                for phone_id, ws in list(ai.phones.items()):
-                    try:
-                        await ws.send(json.dumps({"command": sid}))
-                        return web.Response(text=f"✅ Sent {skill['name']} to phone")
-                    except:
-                        pass
+            # Send to phone if available
+            if sid in ["flashlight", "battery", "vibrate"]:
+                sent = await send_to_phone(sid)
+                if sent:
+                    return web.Response(text=f"✅ Sent {skill['name']} to phone")
+                else:
+                    return web.Response(text=f"⚠️ {skill['name']} - No phone connected")
             return web.Response(text=f"✅ {skill['name']} - {skill['desc']}")
     
     return web.Response(text="❌ No skill found")
@@ -91,4 +97,5 @@ app.router.add_post('/cmd', cmd_handler)
 app.router.add_get('/ws', websocket_handler)
 
 port = int(os.environ.get("PORT", 8080))
+print(f"🚀 Server on port {port}")
 web.run_app(app, port=port)
