@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
+import asyncio
 from aiohttp import web
 
 phones = []
@@ -11,23 +12,27 @@ async def websocket_handler(request):
     
     print("📱 Phone connecting...")
     phones.append(ws)
+    print(f"📱 Total phones: {len(phones)}")
     
     try:
         # Send welcome
-        await ws.send_str(json.dumps({"status": "connected"}))
+        await ws.send_str(json.dumps({"type": "welcome"}))
         
-        # Keep connection alive
+        # Keep connection alive - wait for messages forever
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
-                print(f"📱 Phone: {msg.data}")
+                print(f"📱 Phone says: {msg.data}")
+            elif msg.type == web.WSMsgType.CLOSE:
+                break
             elif msg.type == web.WSMsgType.ERROR:
                 break
+                
     except Exception as e:
         print(f"Error: {e}")
     finally:
         if ws in phones:
             phones.remove(ws)
-        print("📱 Phone disconnected")
+        print(f"📱 Phone disconnected. Total: {len(phones)}")
     
     return ws
 
@@ -52,18 +57,21 @@ async def index(request):
 
 async def cmd_handler(request):
     cmd = await request.text()
+    cmd = cmd.lower()
     
-    if "flashlight" in cmd.lower():
+    if "flashlight" in cmd:
         if phones:
+            sent = 0
             for ws in phones:
                 try:
                     await ws.send_str(json.dumps({"action": "flashlight"}))
+                    sent += 1
                 except:
                     pass
-            return web.Response(text="✅ Sent to phone")
-        return web.Response(text="❌ No phone")
+            return web.Response(text=f"✅ Sent to {sent} phone(s)")
+        return web.Response(text="❌ No phone connected")
     
-    return web.Response(text=f"Command: {cmd}")
+    return web.Response(text=f"Unknown: {cmd}")
 
 app = web.Application()
 app.router.add_get('/', index)
@@ -71,4 +79,5 @@ app.router.add_post('/cmd', cmd_handler)
 app.router.add_get('/ws', websocket_handler)
 
 port = int(os.environ.get("PORT", 8080))
+print(f"Server on port {port}")
 web.run_app(app, port=port)
