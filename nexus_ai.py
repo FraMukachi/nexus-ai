@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
-import asyncio
 from aiohttp import web
-
-SKILLS = {
-    "flashlight": {"name": "🔦 Flashlight", "desc": "Turn on flashlight", "phone": True},
-    "battery": {"name": "🔋 Battery", "desc": "Check battery", "phone": True},
-}
 
 phones = []
 
@@ -20,16 +14,14 @@ async def websocket_handler(request):
     
     try:
         # Send welcome
-        await ws.send_str(json.dumps({"type": "welcome", "heart": "beating"}))
-        print("✅ Welcome sent")
+        await ws.send_str(json.dumps({"status": "connected"}))
         
-        # Keep connection alive - wait for messages
+        # Keep connection alive
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
-                print(f"📱 From phone: {msg.data}")
+                print(f"📱 Phone: {msg.data}")
             elif msg.type == web.WSMsgType.ERROR:
                 break
-                
     except Exception as e:
         print(f"Error: {e}")
     finally:
@@ -43,17 +35,14 @@ async def index(request):
     return web.Response(text=f"""
     <html><body style="background:#0a0a0a;color:#0f0;text-align:center;padding:50px">
     <h1>🧠 NEXUS AI</h1>
-    <p>Phones connected: {len(phones)}</p>
-    <input id="cmd" placeholder="flashlight" style="padding:10px;width:300px">
-    <button onclick="send()">Run</button>
+    <h2>Phones: {len(phones)}</h2>
+    <input id="cmd" style="padding:10px;width:300px">
+    <button onclick="send()">Send</button>
     <div id="result"></div>
     <script>
     async function send() {{
         let cmd = document.getElementById('cmd').value;
-        let res = await fetch('/cmd', {{
-            method: 'POST',
-            body: cmd
-        }});
+        let res = await fetch('/cmd', {{method:'POST', body:cmd}});
         let data = await res.text();
         document.getElementById('result').innerHTML = data;
     }}
@@ -63,19 +52,18 @@ async def index(request):
 
 async def cmd_handler(request):
     cmd = await request.text()
-    cmd = cmd.lower().strip()
     
-    if "flashlight" in cmd:
+    if "flashlight" in cmd.lower():
         if phones:
             for ws in phones:
                 try:
-                    await ws.send_str(json.dumps({"command": "flashlight"}))
+                    await ws.send_str(json.dumps({"action": "flashlight"}))
                 except:
                     pass
-            return web.Response(text=f"✅ Sent flashlight to {len(phones)} phone(s)")
-        return web.Response(text="❌ No phone connected")
+            return web.Response(text="✅ Sent to phone")
+        return web.Response(text="❌ No phone")
     
-    return web.Response(text=f"❌ Unknown: {cmd}")
+    return web.Response(text=f"Command: {cmd}")
 
 app = web.Application()
 app.router.add_get('/', index)
