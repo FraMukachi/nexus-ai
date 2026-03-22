@@ -74,21 +74,17 @@ class NexusAI:
         self.count = 0
         self.phones = {}
         
-        # Setup Groq
         api_key = os.environ.get("GROQ_API_KEY")
         self.groq = Groq(api_key=api_key) if api_key and GROQ_AVAILABLE else None
         print(f"✅ Started | Skills: {self.total} | Groq: {'ON' if self.groq else 'OFF'}")
     
     async def understand_command(self, cmd):
-        """Use Groq to understand natural language"""
         if not self.groq:
             return None
-        
         skill_list = ", ".join(list(self.skills.keys())[:30])
         prompt = f"""User said: "{cmd}"
 Choose the best skill from: {skill_list}
 Return ONLY the skill name."""
-        
         try:
             response = self.groq.chat.completions.create(
                 model="mixtral-8x7b-32768",
@@ -102,11 +98,9 @@ Return ONLY the skill name."""
 
 ai = NexusAI()
 
-# WebSocket for phone
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    
     phone_id = None
     try:
         msg = await ws.receive()
@@ -115,7 +109,6 @@ async def websocket_handler(request):
             ai.phones[phone_id] = ws
             print(f"📱 Phone connected: {phone_id}")
             await ws.send_str(json.dumps({"status": "ok"}))
-            
             async for response in ws:
                 if response.type == web.WSMsgType.TEXT:
                     print(f"📱 From phone: {response.data}")
@@ -137,7 +130,6 @@ async def send_to_phone(cmd):
             continue
     return False
 
-# Web pages
 async def index(request):
     groq_status = "✅ ON" if ai.groq else "❌ OFF"
     return web.Response(text=f"""
@@ -149,8 +141,10 @@ async def index(request):
             body {{ background: linear-gradient(135deg, #0a0a0a, #1a1a2e); font-family: monospace; text-align: center; padding: 50px; color: #0f0; }}
             h1 {{ font-size: 3em; background: linear-gradient(135deg, #00ff9d, #00d4ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
             .stats {{ background: rgba(0,255,157,0.1); padding: 20px; border-radius: 16px; display: inline-block; margin: 10px; }}
-            input {{ padding: 12px; width: 300px; background: #2a2a2a; border: 1px solid #00ff9d; border-radius: 8px; color: white; }}
-            button {{ padding: 12px 24px; background: #00ff9d; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }}
+            input, button {{ padding: 12px; border-radius: 8px; }}
+            input {{ width: 400px; background: #2a2a2a; border: 1px solid #00ff9d; color: white; }}
+            button {{ background: #00ff9d; border: none; cursor: pointer; font-weight: bold; margin-left: 10px; }}
+            .voice-btn {{ background: #ff9900; color: black; }}
             .result {{ margin-top: 20px; padding: 15px; background: #1a1a1a; border-radius: 8px; }}
         </style>
     </head>
@@ -159,15 +153,16 @@ async def index(request):
         <div class="stats">
             <p>📚 Skills: {ai.total} | 📱 Phones: {len(ai.phones)} | ⚡ Groq: {groq_status}</p>
         </div>
-        <form id="cmdForm">
-            <input type="text" id="command" placeholder="Say anything... 'turn on flashlight', 'tell me a joke', 'check battery'" autocomplete="off" style="width: 400px;">
-            <button type="submit">⚡ RUN</button>
-        </form>
+        <div>
+            <input type="text" id="command" placeholder="Type or click microphone and speak..." autocomplete="off" style="width: 400px;">
+            <button onclick="sendCommand()">⚡ RUN</button>
+            <button id="voiceBtn" class="voice-btn" onclick="startVoice()">🎤 VOICE</button>
+        </div>
         <div id="result" class="result"></div>
         <script>
-            document.getElementById('cmdForm').onsubmit = async (e) => {{
-                e.preventDefault();
+            async function sendCommand() {{
                 const cmd = document.getElementById('command').value;
+                if(!cmd) return;
                 document.getElementById('result').innerHTML = 'Processing...';
                 const res = await fetch('/api/command', {{
                     method: 'POST',
@@ -176,6 +171,28 @@ async def index(request):
                 }});
                 const data = await res.json();
                 document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            }}
+            
+            function startVoice() {{
+                if (!('webkitSpeechRecognition' in window)) {{
+                    alert('Voice not supported in this browser. Try Chrome or Edge.');
+                    return;
+                }}
+                const recognition = new webkitSpeechRecognition();
+                recognition.lang = 'en-US';
+                recognition.start();
+                recognition.onresult = (event) => {{
+                    const transcript = event.results[0][0].transcript;
+                    document.getElementById('command').value = transcript;
+                    sendCommand();
+                }};
+                recognition.onerror = (event) => {{
+                    alert('Error: ' + event.error);
+                }};
+            }}
+            
+            document.getElementById('command').onkeypress = (e) => {{
+                if(e.key === 'Enter') sendCommand();
             }};
         </script>
     </body>
@@ -186,11 +203,9 @@ async def api_command(request):
     data = await request.json()
     cmd = data.get("command", "")
     
-    # Use Groq to understand natural language
     understood = await ai.understand_command(cmd)
     skill_id = understood if understood in ai.skills else None
     
-    # Fallback to keyword matching
     if not skill_id:
         for sid in ai.skills:
             if sid in cmd.lower():
@@ -202,7 +217,6 @@ async def api_command(request):
     
     skill = ai.skills[skill_id]
     
-    # Send to phone if it's a phone skill
     if skill.get("phone"):
         sent = await send_to_phone(skill_id)
         if sent:
