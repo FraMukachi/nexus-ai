@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 import os
 import json
-import sqlite3
 from datetime import datetime
 from aiohttp import web
 import asyncio
-
-# Try Groq
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except:
-    GROQ_AVAILABLE = False
 
 # ALL 100+ SKILLS
 SKILLS = {
@@ -71,30 +63,16 @@ class NexusAI:
     def __init__(self):
         self.skills = SKILLS
         self.total = len(SKILLS)
-        self.count = 0
         self.phones = {}
-        
-        api_key = os.environ.get("GROQ_API_KEY")
-        self.groq = Groq(api_key=api_key) if api_key and GROQ_AVAILABLE else None
-        print(f"✅ Started | Skills: {self.total} | Groq: {'ON' if self.groq else 'OFF'}")
+        print(f"✅ Started | Skills: {self.total}")
     
-    async def understand_command(self, cmd):
-        if not self.groq:
-            return None
-        skill_list = ", ".join(list(self.skills.keys())[:30])
-        prompt = f"""User said: "{cmd}"
-Choose the best skill from: {skill_list}
-Return ONLY the skill name."""
-        try:
-            response = self.groq.chat.completions.create(
-                model="mixtral-8x7b-32768",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=20,
-                temperature=0
-            )
-            return response.choices[0].message.content.strip().lower()
-        except:
-            return None
+    def understand_command(self, cmd):
+        """Simple keyword matching (Groq disabled for now)"""
+        cmd_lower = cmd.lower()
+        for sid in self.skills:
+            if sid in cmd_lower:
+                return sid
+        return None
 
 ai = NexusAI()
 
@@ -131,7 +109,6 @@ async def send_to_phone(cmd):
     return False
 
 async def index(request):
-    groq_status = "✅ ON" if ai.groq else "❌ OFF"
     return web.Response(text=f"""
     <!DOCTYPE html>
     <html>
@@ -151,7 +128,7 @@ async def index(request):
     <body>
         <h1>🧠 NEXUS AI</h1>
         <div class="stats">
-            <p>📚 Skills: {ai.total} | 📱 Phones: {len(ai.phones)} | ⚡ Groq: {groq_status}</p>
+            <p>📚 Skills: {ai.total} | 📱 Phones: {len(ai.phones)}</p>
         </div>
         <div>
             <input type="text" id="command" placeholder="Type or click microphone and speak..." autocomplete="off" style="width: 400px;">
@@ -203,14 +180,7 @@ async def api_command(request):
     data = await request.json()
     cmd = data.get("command", "")
     
-    understood = await ai.understand_command(cmd)
-    skill_id = understood if understood in ai.skills else None
-    
-    if not skill_id:
-        for sid in ai.skills:
-            if sid in cmd.lower():
-                skill_id = sid
-                break
+    skill_id = ai.understand_command(cmd)
     
     if not skill_id:
         return web.json_response({"success": False, "error": "No skill found", "command": cmd})
